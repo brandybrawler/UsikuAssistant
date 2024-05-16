@@ -1,14 +1,15 @@
 import sys
+import asyncio
+import websockets
 from typing import List
 
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QFileDialog, QMessageBox, QComboBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QFileDialog, QMessageBox, QComboBox
 from phi.assistant import Assistant
 from phi.document import Document
 from phi.document.reader.pdf import PDFReader
 from phi.utils.log import logger
 
 from assistant import get_rag_assistant  # type: ignore
-
 
 class RAGAssistantApp(QMainWindow):
     def __init__(self):
@@ -143,9 +144,30 @@ class RAGAssistantApp(QMainWindow):
             )
             self.chat_display.clear()
 
+async def handle_message(websocket, path, app: RAGAssistantApp):
+    async for message in websocket:
+        prompt = message
+        response = ""
+        try:
+            if app.rag_assistant is None:
+                await websocket.send("Assistant not initialized.")
+                continue
+
+            async for delta in app.rag_assistant.run(prompt):
+                response += delta  # type: ignore
+                await websocket.send(delta)
+        except Exception as e:
+            await websocket.send(f"Error: {str(e)}")
+
+async def start_websocket_server(app: RAGAssistantApp):
+    server = await websockets.serve(lambda ws, path: handle_message(ws, path, app), "localhost", 8765)
+    await server.wait_closed()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = RAGAssistantApp()
     window.show()
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_websocket_server(window))
     sys.exit(app.exec_())
