@@ -102,13 +102,22 @@ class RAGAssistantApp(QMainWindow):
             if self.rag_assistant is None:
                 QMessageBox.warning(self, "Warning", "Assistant not initialized.")
                 return
-            response = ""
-            try:
-                for delta in self.rag_assistant.run(prompt):
-                    response += delta  # type: ignore
-                self.chat_display.append(f"Assistant: {response}")
-            except AttributeError as e:
-                QMessageBox.critical(self, "Error", f"An error occurred while generating a response: {str(e)}")
+            threading.Thread(target=self.generate_response, args=(prompt,)).start()
+
+    def generate_response(self, prompt):
+        response = ""
+        try:
+            for delta in self.rag_assistant.run(prompt):
+                response += delta  # type: ignore
+                self.update_chat_display(f"Assistant: {response}")
+        except AttributeError as e:
+            self.show_error_message(f"An error occurred while generating a response: {str(e)}")
+
+    def update_chat_display(self, message):
+        self.chat_display.append(message)
+
+    def show_error_message(self, message):
+        QMessageBox.critical(self, "Error", message)
 
     def on_add_pdf(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Add PDF", "", "PDF Files (*.pdf)")
@@ -144,15 +153,16 @@ async def handle_message(websocket, path, app: RAGAssistantApp):
             if app.rag_assistant is None:
                 await websocket.send("Assistant not initialized.")
                 continue
-            async for delta in app.rag_assistant.run(prompt):
+            # Process the generator synchronously and send updates asynchronously
+            for delta in app.rag_assistant.run(prompt):
                 response += delta  # type: ignore
                 await websocket.send(delta)
         except Exception as e:
             await websocket.send(f"Error: {str(e)}")
 
 async def start_websocket_server(app: RAGAssistantApp):
-    server = await websockets.serve(lambda ws, path: handle_message(ws, path, app), "localhost", 8765)
-    await server.wait_closed()
+    async with websockets.serve(lambda ws, path: handle_message(ws, path, app), "0.0.0.0", 8765):
+        await asyncio.Future()  # run forever
 
 def start_websocket_thread(app: RAGAssistantApp):
     loop = asyncio.new_event_loop()
